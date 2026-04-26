@@ -6,37 +6,11 @@ import FileUpload from "../../components/FileUpload";
 import LiveWebcam from "../../components/LiveWebcam";
 import ProgressBar from "../../components/ProgressBar";
 import VideoResult from "../../components/VideoResult";
-import { getBrowserSupabaseClient } from "../../lib/supabase";
 import type { JobResponse, JobStatus } from "../../lib/types";
 
 type GenerateMode = "upload" | "live";
 
-function getAppUrl() {
-  return (process.env.NEXT_PUBLIC_APP_URL ?? "").replace(/\/$/, "") || "http://localhost:3000";
-}
-
-function getCooldownRemaining(key: string) {
-  if (typeof window === "undefined") {
-    return 0;
-  }
-
-  const storedValue = window.localStorage.getItem(key);
-  if (!storedValue) {
-    return 0;
-  }
-
-  const expiresAt = Number(storedValue);
-  if (!Number.isFinite(expiresAt)) {
-    return 0;
-  }
-
-  return Math.max(0, Math.ceil((expiresAt - Date.now()) / 1000));
-}
-
 export default function GeneratePage() {
-  const supabase = getBrowserSupabaseClient();
-  const cooldownKey = "cloneme-magic-link-cooldown-generate";
-
   const [mode, setMode] = useState<GenerateMode>("upload");
   const [photoFile, setPhotoFile] = useState<File | null>(null);
   const [videoFile, setVideoFile] = useState<File | null>(null);
@@ -46,42 +20,14 @@ export default function GeneratePage() {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [progress, setProgress] = useState(0);
-  const [emailForLogin, setEmailForLogin] = useState("");
-  const [hasSession, setHasSession] = useState(false);
   const [liveReferenceUrl, setLiveReferenceUrl] = useState<string | null>(null);
   const [liveReferenceError, setLiveReferenceError] = useState<string | null>(null);
   const [isPreparingLiveReference, setIsPreparingLiveReference] = useState(false);
   const [livePreparedPhotoKey, setLivePreparedPhotoKey] = useState<string | null>(null);
-  const [magicLinkCooldown, setMagicLinkCooldown] = useState(0);
-  const [isSendingMagicLink, setIsSendingMagicLink] = useState(false);
 
   const processingTickRef = useRef<number>(0);
 
   const photoKey = photoFile ? `${photoFile.name}-${photoFile.size}-${photoFile.lastModified}` : null;
-
-  useEffect(() => {
-    supabase.auth.getSession().then(({ data }) => {
-      setHasSession(Boolean(data.session));
-    });
-
-    const {
-      data: { subscription }
-    } = supabase.auth.onAuthStateChange((_event, session) => {
-      setHasSession(Boolean(session));
-    });
-
-    return () => subscription.unsubscribe();
-  }, [supabase.auth]);
-
-  useEffect(() => {
-    setMagicLinkCooldown(getCooldownRemaining(cooldownKey));
-
-    const interval = window.setInterval(() => {
-      setMagicLinkCooldown(getCooldownRemaining(cooldownKey));
-    }, 1000);
-
-    return () => window.clearInterval(interval);
-  }, [cooldownKey]);
 
   useEffect(() => {
     if (!jobId) {
@@ -89,18 +35,9 @@ export default function GeneratePage() {
     }
 
     const interval = setInterval(async () => {
-      const session = await supabase.auth.getSession();
-      const token = session.data.session?.access_token;
-
-      if (!token) {
-        setErrorMessage("You were signed out. Please sign in again.");
-        clearInterval(interval);
-        return;
-      }
-
       const response = await fetch(`/api/jobs/${jobId}`, {
         headers: {
-          Authorization: `Bearer ${token}`
+          "Content-Type": "application/json"
         }
       });
 
@@ -129,7 +66,7 @@ export default function GeneratePage() {
     }, 3000);
 
     return () => clearInterval(interval);
-  }, [jobId, supabase.auth]);
+  }, [jobId]);
 
   useEffect(() => {
     if (!photoKey || photoKey !== livePreparedPhotoKey) {
@@ -137,49 +74,12 @@ export default function GeneratePage() {
     }
   }, [livePreparedPhotoKey, photoKey]);
 
-  const canGenerate = useMemo(() => Boolean(photoFile && videoFile && hasSession), [photoFile, videoFile, hasSession]);
+  const canGenerate = useMemo(() => Boolean(photoFile && videoFile), [photoFile, videoFile]);
 
   const canPrepareLiveReference = useMemo(
-    () => Boolean(photoFile && hasSession && photoKey && photoKey !== livePreparedPhotoKey),
-    [hasSession, livePreparedPhotoKey, photoFile, photoKey]
+    () => Boolean(photoFile && photoKey && photoKey !== livePreparedPhotoKey),
+    [livePreparedPhotoKey, photoFile, photoKey]
   );
-
-  const signInWithMagicLink = async () => {
-    if (magicLinkCooldown > 0 || isSendingMagicLink) {
-      return;
-    }
-
-    setErrorMessage(null);
-    setIsSendingMagicLink(true);
-
-    const { error } = await supabase.auth.signInWithOtp({
-      email: emailForLogin,
-      options: {
-        emailRedirectTo: `${getAppUrl()}/generate`
-      }
-    });
-
-    if (error) {
-      if (error.status === 429) {
-        const retryAfterSeconds = 60;
-        const expiresAt = Date.now() + retryAfterSeconds * 1000;
-        window.localStorage.setItem(cooldownKey, String(expiresAt));
-        setMagicLinkCooldown(retryAfterSeconds);
-        setErrorMessage("Too many magic-link requests. Please wait 60 seconds and try again.");
-      } else {
-        setErrorMessage(error.message);
-      }
-      setIsSendingMagicLink(false);
-      return;
-    }
-
-    setErrorMessage("Check your email for a magic login link.");
-    const retryAfterSeconds = 60;
-    const expiresAt = Date.now() + retryAfterSeconds * 1000;
-    window.localStorage.setItem(cooldownKey, String(expiresAt));
-    setMagicLinkCooldown(retryAfterSeconds);
-    setIsSendingMagicLink(false);
-  };
 
   const handleGenerate = async () => {
     if (!photoFile || !videoFile) {
@@ -193,24 +93,12 @@ export default function GeneratePage() {
     setProgress(10);
     processingTickRef.current = 0;
 
-    const sessionResponse = await supabase.auth.getSession();
-    const token = sessionResponse.data.session?.access_token;
-
-    if (!token) {
-      setErrorMessage("You need to sign in first.");
-      setIsSubmitting(false);
-      return;
-    }
-
     const formData = new FormData();
     formData.append("photo", photoFile);
     formData.append("video", videoFile);
 
     const response = await fetch("/api/generate", {
       method: "POST",
-      headers: {
-        Authorization: `Bearer ${token}`
-      },
       body: formData
     });
 
@@ -232,14 +120,6 @@ export default function GeneratePage() {
       return;
     }
 
-    const sessionResponse = await supabase.auth.getSession();
-    const token = sessionResponse.data.session?.access_token;
-
-    if (!token) {
-      setLiveReferenceError("You need to sign in first.");
-      return;
-    }
-
     setLiveReferenceError(null);
     setIsPreparingLiveReference(true);
 
@@ -248,9 +128,6 @@ export default function GeneratePage() {
 
     const response = await fetch("/api/live-reference", {
       method: "POST",
-      headers: {
-        Authorization: `Bearer ${token}`
-      },
       body: formData
     });
 
@@ -296,29 +173,6 @@ export default function GeneratePage() {
           Live Webcam
         </button>
       </div>
-
-      {!hasSession ? (
-        <section className="surface-card mb-8 p-6">
-          <h2 className="font-heading text-2xl">Sign in to start</h2>
-          <p className="mt-2 text-sm text-muted">Use an email magic link for secure access.</p>
-          <div className="mt-4 flex flex-col gap-3 md:flex-row">
-            <input
-              className="w-full rounded-xl border border-accent/30 bg-[#131322] px-4 py-3 text-sm outline-none focus:border-accent"
-              onChange={(event) => setEmailForLogin(event.target.value)}
-              placeholder="you@example.com"
-              type="email"
-              value={emailForLogin}
-            />
-            <button className="primary-btn px-5 py-3" onClick={signInWithMagicLink} type="button">
-              {isSendingMagicLink
-                ? "Sending..."
-                : magicLinkCooldown > 0
-                  ? `Wait ${magicLinkCooldown}s`
-                  : "Send Magic Link"}
-            </button>
-          </div>
-        </section>
-      ) : null}
 
       {errorMessage ? <p className="mb-4 text-sm text-red-300">{errorMessage}</p> : null}
 

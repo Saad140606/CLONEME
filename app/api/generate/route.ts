@@ -1,14 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getServerSupabaseAnonClient, getServerSupabaseServiceClient } from "../../../lib/supabase";
-
-function getBearerToken(request: NextRequest): string | null {
-  const header = request.headers.get("authorization");
-  if (!header?.startsWith("Bearer ")) {
-    return null;
-  }
-
-  return header.slice("Bearer ".length).trim();
-}
+import { getServerSupabaseServiceClient } from "../../../lib/supabase";
 
 function getMimeExtension(file: File, fallback: string): string {
   if (file.type.includes("png")) {
@@ -29,20 +20,7 @@ function getMimeExtension(file: File, fallback: string): string {
 
 export async function POST(request: NextRequest) {
   try {
-    const token = getBearerToken(request);
-    if (!token) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-
-    const anonClient = getServerSupabaseAnonClient();
     const serviceClient = getServerSupabaseServiceClient();
-
-    const userResponse = await anonClient.auth.getUser(token);
-    const user = userResponse.data.user;
-
-    if (!user) {
-      return NextResponse.json({ error: "Invalid auth token" }, { status: 401 });
-    }
 
     const formData = await request.formData();
     const photo = formData.get("photo");
@@ -60,8 +38,8 @@ export async function POST(request: NextRequest) {
     }
 
     const now = Date.now();
-    const photoPath = `${user.id}/${now}-photo.${getMimeExtension(photo, "jpg")}`;
-    const videoPath = `${user.id}/${now}-video.${getMimeExtension(video, "mp4")}`;
+    const photoPath = `public/${now}-photo.${getMimeExtension(photo, "jpg")}`;
+    const videoPath = `public/${now}-video.${getMimeExtension(video, "mp4")}`;
 
     const uploadedPhoto = await serviceClient.storage.from("uploads").upload(photoPath, photo, {
       contentType: photo.type,
@@ -84,7 +62,6 @@ export async function POST(request: NextRequest) {
     const createdJob = await serviceClient
       .from("jobs")
       .insert({
-        user_id: user.id,
         mode: "upload",
         status: "pending",
         photo_url: photoPath,

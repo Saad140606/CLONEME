@@ -1,14 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getServerSupabaseAnonClient, getServerSupabaseServiceClient } from "../../../lib/supabase";
-
-function getBearerToken(request: NextRequest): string | null {
-  const header = request.headers.get("authorization");
-  if (!header?.startsWith("Bearer ")) {
-    return null;
-  }
-
-  return header.slice("Bearer ".length).trim();
-}
+import { getServerSupabaseServiceClient } from "../../../lib/supabase";
 
 function getPhotoExt(file: File): "jpg" | "png" {
   return file.type.includes("png") ? "png" : "jpg";
@@ -16,19 +7,7 @@ function getPhotoExt(file: File): "jpg" | "png" {
 
 export async function POST(request: NextRequest) {
   try {
-    const token = getBearerToken(request);
-    if (!token) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-
-    const anonClient = getServerSupabaseAnonClient();
     const serviceClient = getServerSupabaseServiceClient();
-
-    const userResponse = await anonClient.auth.getUser(token);
-    const user = userResponse.data.user;
-    if (!user) {
-      return NextResponse.json({ error: "Invalid auth token" }, { status: 401 });
-    }
 
     const form = await request.formData();
     const photo = form.get("photo");
@@ -41,7 +20,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Only jpg/png supported." }, { status: 400 });
     }
 
-    const path = `${user.id}/live/${Date.now()}-reference.${getPhotoExt(photo)}`;
+    const path = `public/live/${Date.now()}-reference.${getPhotoExt(photo)}`;
     const upload = await serviceClient.storage.from("uploads").upload(path, photo, {
       upsert: false,
       contentType: photo.type

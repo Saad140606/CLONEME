@@ -20,6 +20,8 @@ export default function GeneratePage() {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [progress, setProgress] = useState(0);
+  const [startedAt, setStartedAt] = useState<number | null>(null);
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [liveReferenceUrl, setLiveReferenceUrl] = useState<string | null>(null);
   const [liveReferenceError, setLiveReferenceError] = useState<string | null>(null);
   const [isPreparingLiveReference, setIsPreparingLiveReference] = useState(false);
@@ -28,6 +30,20 @@ export default function GeneratePage() {
   const processingTickRef = useRef<number>(0);
 
   const photoKey = photoFile ? `${photoFile.name}-${photoFile.size}-${photoFile.lastModified}` : null;
+  const estimatedTotalSeconds = mode === "upload" ? 600 : 2;
+  const remainingSeconds = Math.max(0, estimatedTotalSeconds - elapsedSeconds);
+
+  useEffect(() => {
+    if (!startedAt || !jobId || status === "done" || status === "failed") {
+      return;
+    }
+
+    const interval = window.setInterval(() => {
+      setElapsedSeconds(Math.max(0, Math.floor((Date.now() - startedAt) / 1000)));
+    }, 1000);
+
+    return () => window.clearInterval(interval);
+  }, [jobId, startedAt, status]);
 
   useEffect(() => {
     if (!jobId) {
@@ -51,10 +67,10 @@ export default function GeneratePage() {
       setStatus(payload.status);
 
       if (payload.status === "pending") {
-        setProgress(20);
+        setProgress((current) => Math.max(current, 20));
       } else if (payload.status === "processing") {
         processingTickRef.current += 1;
-        setProgress(Math.min(90, 35 + processingTickRef.current * 8));
+        setProgress((current) => Math.min(98, Math.max(current, 35 + processingTickRef.current * 6)));
       } else if (payload.status === "done") {
         setProgress(100);
         setResultUrl(payload.result_url);
@@ -91,6 +107,8 @@ export default function GeneratePage() {
     setResultUrl(null);
     setStatus("pending");
     setProgress(10);
+    setStartedAt(Date.now());
+    setElapsedSeconds(0);
     processingTickRef.current = 0;
 
     const formData = new FormData();
@@ -210,6 +228,12 @@ export default function GeneratePage() {
           {status ? (
             <div className="mt-6">
               <ProgressBar statusText={`Status: ${status}`} value={progress} />
+              <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-sm text-muted">
+                <span>Estimated remaining: {new Date(remainingSeconds * 1000).toISOString().slice(14, 19)}</span>
+                <span>
+                  {mode === "upload" ? "Upload mode usually takes 2-10 minutes." : "Live mode runs every ~500ms."}
+                </span>
+              </div>
             </div>
           ) : null}
 

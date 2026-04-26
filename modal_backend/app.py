@@ -13,6 +13,32 @@ _face_app = None
 _swapper = None
 _reference_face_cache = {}
 
+
+def update_job_status(job_id: str, status: str, result_url: str | None = None) -> None:
+    supabase_url = os.environ["SUPABASE_URL"]
+    supabase_key = os.environ["SUPABASE_SERVICE_KEY"]
+
+    payload = {
+        "status": status,
+        "updated_at": "now",
+    }
+
+    if result_url is not None:
+      payload["result_url"] = result_url
+
+    response = requests.patch(
+        f"{supabase_url}/rest/v1/jobs?id=eq.{job_id}",
+        headers={
+            "Authorization": f"Bearer {supabase_key}",
+            "apikey": supabase_key,
+            "Content-Type": "application/json",
+            "Prefer": "return=minimal",
+        },
+        json=payload,
+        timeout=30,
+    )
+    response.raise_for_status()
+
 base_image = (
     modal.Image.debian_slim(python_version="3.10")
     .apt_install("git", "ffmpeg", "libgl1-mesa-glx", "libglib2.0-0")
@@ -96,8 +122,13 @@ def run_upload_inference(item: dict):
         upload_resp.raise_for_status()
 
         result_url = f"{supabase_url}/storage/v1/object/public/results/{job_id}.mp4"
+        update_job_status(job_id, "done", result_url)
         requests.post(webhook_url, json={"job_id": job_id, "result_url": result_url}, timeout=30)
     except Exception as error:
+        try:
+            update_job_status(job_id, "failed")
+        except Exception:
+            pass
         requests.post(webhook_url, json={"job_id": job_id, "error": str(error)}, timeout=30)
 
     return {"ok": True}

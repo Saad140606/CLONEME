@@ -1,6 +1,27 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getServerSupabaseServiceClient } from "../../../lib/supabase";
 
+function resolveModalFunctionUrl(explicitUrl: string | undefined, baseUrl: string | undefined, functionName: string): string | null {
+  if (explicitUrl) {
+    return explicitUrl.replace(/\/$/, "");
+  }
+
+  if (!baseUrl) {
+    return null;
+  }
+
+  const trimmedBaseUrl = baseUrl.replace(/\/$/, "");
+  if (trimmedBaseUrl.includes(`-${functionName}.modal.run`)) {
+    return trimmedBaseUrl;
+  }
+
+  if (trimmedBaseUrl.endsWith(".modal.run")) {
+    return trimmedBaseUrl.replace(/\.modal\.run$/, `-${functionName}.modal.run`);
+  }
+
+  return trimmedBaseUrl;
+}
+
 function getMimeExtension(file: File, fallback: string): string {
   if (file.type.includes("png")) {
     return "png";
@@ -71,6 +92,16 @@ export async function POST(request: NextRequest) {
       .single();
 
     if (createdJob.error || !createdJob.data) {
+      if (createdJob.error?.code === "PGRST205") {
+        return NextResponse.json(
+          {
+            error:
+              "Supabase schema is not applied yet. Create the public.jobs table and storage buckets from supabase/schema.sql."
+          },
+          { status: 500 }
+        );
+      }
+
       return NextResponse.json({ error: createdJob.error?.message ?? "Failed to create job" }, { status: 500 });
     }
 
@@ -88,19 +119,21 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Failed to create signed URLs for uploaded files." }, { status: 500 });
     }
 
-    const modalBase = process.env.MODAL_API_URL;
+    const modalGenerateUrl = resolveModalFunctionUrl(
+      process.env.MODAL_GENERATE_URL,
+      process.env.MODAL_API_URL,
+      "generate"
+    );
     const appUrl = process.env.NEXT_PUBLIC_APP_URL;
 
-    if (!modalBase || !appUrl) {
+    if (!modalGenerateUrl || !appUrl) {
       return NextResponse.json(
-        { error: "MODAL_API_URL and NEXT_PUBLIC_APP_URL must be configured." },
+        { error: "MODAL_GENERATE_URL and NEXT_PUBLIC_APP_URL must be configured." },
         { status: 500 }
       );
     }
 
-    const modalEndpoint = `${modalBase.replace(/\/$/, "")}/generate`;
-
-    const modalResponse = await fetch(modalEndpoint, {
+    const modalResponse = await fetch(modalGenerateUrl.replace(/\/$/, ""), {
       method: "POST",
       headers: {
         "Content-Type": "application/json"

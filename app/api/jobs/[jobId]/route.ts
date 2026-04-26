@@ -14,6 +14,16 @@ export async function GET(
     .single();
 
   if (query.error || !query.data) {
+    if (query.error?.code === "PGRST205") {
+      return NextResponse.json(
+        {
+          error:
+            "Supabase schema is not applied yet. Create the public.jobs table and storage buckets from supabase/schema.sql."
+        },
+        { status: 500 }
+      );
+    }
+
     return NextResponse.json({ error: "Job not found" }, { status: 404 });
   }
 

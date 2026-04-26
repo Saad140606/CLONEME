@@ -27,6 +27,16 @@ export async function POST(request: NextRequest) {
     });
 
     if (upload.error) {
+      if (upload.error.message?.toLowerCase().includes("bucket") || upload.error.message?.includes("not found")) {
+        return NextResponse.json(
+          {
+            error:
+              "Supabase storage buckets are not set up yet. Create uploads (private) and results (public) from supabase/schema.sql instructions."
+          },
+          { status: 500 }
+        );
+      }
+
       return NextResponse.json({ error: upload.error.message }, { status: 500 });
     }
 

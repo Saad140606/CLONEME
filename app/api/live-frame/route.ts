@@ -3,6 +3,27 @@ import { NextRequest, NextResponse } from "next/server";
 export const runtime = "nodejs";
 export const maxDuration = 30;
 
+function resolveModalFunctionUrl(explicitUrl: string | undefined, baseUrl: string | undefined, functionName: string): string | null {
+  if (explicitUrl) {
+    return explicitUrl.replace(/\/$/, "");
+  }
+
+  if (!baseUrl) {
+    return null;
+  }
+
+  const trimmedBaseUrl = baseUrl.replace(/\/$/, "");
+  if (trimmedBaseUrl.includes(`-${functionName}.modal.run`)) {
+    return trimmedBaseUrl;
+  }
+
+  if (trimmedBaseUrl.endsWith(".modal.run")) {
+    return trimmedBaseUrl.replace(/\.modal\.run$/, `-${functionName}.modal.run`);
+  }
+
+  return trimmedBaseUrl;
+}
+
 export async function POST(request: NextRequest) {
   try {
     const form = await request.formData();
@@ -16,12 +37,16 @@ export async function POST(request: NextRequest) {
     const frameBytes = new Uint8Array(await frame.arrayBuffer());
     const frameB64 = Buffer.from(frameBytes).toString("base64");
 
-    const modalBase = process.env.MODAL_API_URL;
-    if (!modalBase) {
-      return NextResponse.json({ error: "MODAL_API_URL is not configured." }, { status: 500 });
+    const modalLiveFrameUrl = resolveModalFunctionUrl(
+      process.env.MODAL_LIVE_FRAME_URL,
+      process.env.MODAL_API_URL,
+      "live-frame"
+    );
+    if (!modalLiveFrameUrl) {
+      return NextResponse.json({ error: "MODAL_LIVE_FRAME_URL is not configured." }, { status: 500 });
     }
 
-    const modalResponse = await fetch(`${modalBase.replace(/\/$/, "")}/live-frame`, {
+    const modalResponse = await fetch(modalLiveFrameUrl.replace(/\/$/, ""), {
       method: "POST",
       headers: {
         "Content-Type": "application/json"
@@ -33,7 +58,8 @@ export async function POST(request: NextRequest) {
     });
 
     if (!modalResponse.ok) {
-      return NextResponse.json({ error: "Modal error" }, { status: 500 });
+      const modalText = await modalResponse.text().catch(() => "");
+      return NextResponse.json({ error: modalText || "Modal error" }, { status: 500 });
     }
 
     const payload = (await modalResponse.json()) as { frame_b64?: string };

@@ -11,6 +11,10 @@ import type { JobResponse, JobStatus } from "../../lib/types";
 
 type GenerateMode = "upload" | "live";
 
+function getAppUrl() {
+  return (process.env.NEXT_PUBLIC_APP_URL ?? "").replace(/\/$/, "") || "http://localhost:3000";
+}
+
 export default function GeneratePage() {
   const supabase = getBrowserSupabaseClient();
 
@@ -115,7 +119,7 @@ export default function GeneratePage() {
     const { error } = await supabase.auth.signInWithOtp({
       email: emailForLogin,
       options: {
-        emailRedirectTo: `${window.location.origin}/generate`
+        emailRedirectTo: `${getAppUrl()}/generate`
       }
     });
 

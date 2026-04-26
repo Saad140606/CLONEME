@@ -6,6 +6,10 @@ import JobTable from "../../components/JobTable";
 import { getBrowserSupabaseClient } from "../../lib/supabase";
 import type { JobRow } from "../../lib/types";
 
+function getAppUrl() {
+  return (process.env.NEXT_PUBLIC_APP_URL ?? "").replace(/\/$/, "") || "http://localhost:3000";
+}
+
 export default function DashboardPage() {
   const supabase = getBrowserSupabaseClient();
 
@@ -64,7 +68,7 @@ export default function DashboardPage() {
     const { error } = await supabase.auth.signInWithOtp({
       email,
       options: {
-        emailRedirectTo: `${window.location.origin}/dashboard`
+        emailRedirectTo: `${getAppUrl()}/dashboard`
       }
     });
 

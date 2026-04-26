@@ -15,8 +15,27 @@ function getAppUrl() {
   return (process.env.NEXT_PUBLIC_APP_URL ?? "").replace(/\/$/, "") || "http://localhost:3000";
 }
 
+function getCooldownRemaining(key: string) {
+  if (typeof window === "undefined") {
+    return 0;
+  }
+
+  const storedValue = window.localStorage.getItem(key);
+  if (!storedValue) {
+    return 0;
+  }
+
+  const expiresAt = Number(storedValue);
+  if (!Number.isFinite(expiresAt)) {
+    return 0;
+  }
+
+  return Math.max(0, Math.ceil((expiresAt - Date.now()) / 1000));
+}
+
 export default function GeneratePage() {
   const supabase = getBrowserSupabaseClient();
+  const cooldownKey = "cloneme-magic-link-cooldown-generate";
 
   const [mode, setMode] = useState<GenerateMode>("upload");
   const [photoFile, setPhotoFile] = useState<File | null>(null);
@@ -33,6 +52,8 @@ export default function GeneratePage() {
   const [liveReferenceError, setLiveReferenceError] = useState<string | null>(null);
   const [isPreparingLiveReference, setIsPreparingLiveReference] = useState(false);
   const [livePreparedPhotoKey, setLivePreparedPhotoKey] = useState<string | null>(null);
+  const [magicLinkCooldown, setMagicLinkCooldown] = useState(0);
+  const [isSendingMagicLink, setIsSendingMagicLink] = useState(false);
 
   const processingTickRef = useRef<number>(0);
 
@@ -51,6 +72,16 @@ export default function GeneratePage() {
 
     return () => subscription.unsubscribe();
   }, [supabase.auth]);
+
+  useEffect(() => {
+    setMagicLinkCooldown(getCooldownRemaining(cooldownKey));
+
+    const interval = window.setInterval(() => {
+      setMagicLinkCooldown(getCooldownRemaining(cooldownKey));
+    }, 1000);
+
+    return () => window.clearInterval(interval);
+  }, [cooldownKey]);
 
   useEffect(() => {
     if (!jobId) {
@@ -114,7 +145,12 @@ export default function GeneratePage() {
   );
 
   const signInWithMagicLink = async () => {
+    if (magicLinkCooldown > 0 || isSendingMagicLink) {
+      return;
+    }
+
     setErrorMessage(null);
+    setIsSendingMagicLink(true);
 
     const { error } = await supabase.auth.signInWithOtp({
       email: emailForLogin,
@@ -124,11 +160,25 @@ export default function GeneratePage() {
     });
 
     if (error) {
-      setErrorMessage(error.message);
+      if (error.status === 429) {
+        const retryAfterSeconds = 60;
+        const expiresAt = Date.now() + retryAfterSeconds * 1000;
+        window.localStorage.setItem(cooldownKey, String(expiresAt));
+        setMagicLinkCooldown(retryAfterSeconds);
+        setErrorMessage("Too many magic-link requests. Please wait 60 seconds and try again.");
+      } else {
+        setErrorMessage(error.message);
+      }
+      setIsSendingMagicLink(false);
       return;
     }
 
     setErrorMessage("Check your email for a magic login link.");
+    const retryAfterSeconds = 60;
+    const expiresAt = Date.now() + retryAfterSeconds * 1000;
+    window.localStorage.setItem(cooldownKey, String(expiresAt));
+    setMagicLinkCooldown(retryAfterSeconds);
+    setIsSendingMagicLink(false);
   };
 
   const handleGenerate = async () => {
@@ -260,7 +310,11 @@ export default function GeneratePage() {
               value={emailForLogin}
             />
             <button className="primary-btn px-5 py-3" onClick={signInWithMagicLink} type="button">
-              Send Magic Link
+              {isSendingMagicLink
+                ? "Sending..."
+                : magicLinkCooldown > 0
+                  ? `Wait ${magicLinkCooldown}s`
+                  : "Send Magic Link"}
             </button>
           </div>
         </section>

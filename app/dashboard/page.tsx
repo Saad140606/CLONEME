@@ -10,14 +10,35 @@ function getAppUrl() {
   return (process.env.NEXT_PUBLIC_APP_URL ?? "").replace(/\/$/, "") || "http://localhost:3000";
 }
 
+function getCooldownRemaining(key: string) {
+  if (typeof window === "undefined") {
+    return 0;
+  }
+
+  const storedValue = window.localStorage.getItem(key);
+  if (!storedValue) {
+    return 0;
+  }
+
+  const expiresAt = Number(storedValue);
+  if (!Number.isFinite(expiresAt)) {
+    return 0;
+  }
+
+  return Math.max(0, Math.ceil((expiresAt - Date.now()) / 1000));
+}
+
 export default function DashboardPage() {
   const supabase = getBrowserSupabaseClient();
+  const cooldownKey = "cloneme-magic-link-cooldown-dashboard";
 
   const [email, setEmail] = useState("");
   const [message, setMessage] = useState<string | null>(null);
   const [jobs, setJobs] = useState<JobRow[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [magicLinkCooldown, setMagicLinkCooldown] = useState(0);
+  const [isSendingMagicLink, setIsSendingMagicLink] = useState(false);
 
   const fetchJobs = async () => {
     setIsLoading(true);
@@ -63,8 +84,23 @@ export default function DashboardPage() {
     return () => subscription.unsubscribe();
   }, [supabase.auth]);
 
+  useEffect(() => {
+    setMagicLinkCooldown(getCooldownRemaining(cooldownKey));
+
+    const interval = window.setInterval(() => {
+      setMagicLinkCooldown(getCooldownRemaining(cooldownKey));
+    }, 1000);
+
+    return () => window.clearInterval(interval);
+  }, [cooldownKey]);
+
   const signIn = async () => {
+    if (magicLinkCooldown > 0 || isSendingMagicLink) {
+      return;
+    }
+
     setMessage(null);
+    setIsSendingMagicLink(true);
     const { error } = await supabase.auth.signInWithOtp({
       email,
       options: {
@@ -73,11 +109,25 @@ export default function DashboardPage() {
     });
 
     if (error) {
-      setMessage(error.message);
+      if (error.status === 429) {
+        const retryAfterSeconds = 60;
+        const expiresAt = Date.now() + retryAfterSeconds * 1000;
+        window.localStorage.setItem(cooldownKey, String(expiresAt));
+        setMagicLinkCooldown(retryAfterSeconds);
+        setMessage("Too many magic-link requests. Please wait 60 seconds and try again.");
+      } else {
+        setMessage(error.message);
+      }
+      setIsSendingMagicLink(false);
       return;
     }
 
     setMessage("Magic link sent. Check your inbox.");
+    const retryAfterSeconds = 60;
+    const expiresAt = Date.now() + retryAfterSeconds * 1000;
+    window.localStorage.setItem(cooldownKey, String(expiresAt));
+    setMagicLinkCooldown(retryAfterSeconds);
+    setIsSendingMagicLink(false);
   };
 
   const signOut = async () => {
@@ -114,7 +164,11 @@ export default function DashboardPage() {
               value={email}
             />
             <button className="primary-btn px-5 py-3" onClick={signIn} type="button">
-              Send Magic Link
+              {isSendingMagicLink
+                ? "Sending..."
+                : magicLinkCooldown > 0
+                  ? `Wait ${magicLinkCooldown}s`
+                  : "Send Magic Link"}
             </button>
           </div>
         </section>

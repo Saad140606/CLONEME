@@ -1,0 +1,64 @@
+import { NextRequest, NextResponse } from "next/server";
+import { getServerSupabaseAnonClient, getServerSupabaseServiceClient } from "../../../lib/supabase";
+
+function getBearerToken(request: NextRequest): string | null {
+  const header = request.headers.get("authorization");
+  if (!header?.startsWith("Bearer ")) {
+    return null;
+  }
+
+  return header.slice("Bearer ".length).trim();
+}
+
+function getPhotoExt(file: File): "jpg" | "png" {
+  return file.type.includes("png") ? "png" : "jpg";
+}
+
+export async function POST(request: NextRequest) {
+  try {
+    const token = getBearerToken(request);
+    if (!token) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    const anonClient = getServerSupabaseAnonClient();
+    const serviceClient = getServerSupabaseServiceClient();
+
+    const userResponse = await anonClient.auth.getUser(token);
+    const user = userResponse.data.user;
+    if (!user) {
+      return NextResponse.json({ error: "Invalid auth token" }, { status: 401 });
+    }
+
+    const form = await request.formData();
+    const photo = form.get("photo");
+
+    if (!(photo instanceof File)) {
+      return NextResponse.json({ error: "Missing photo" }, { status: 400 });
+    }
+
+    if (!["image/jpeg", "image/png"].includes(photo.type)) {
+      return NextResponse.json({ error: "Only jpg/png supported." }, { status: 400 });
+    }
+
+    const path = `${user.id}/live/${Date.now()}-reference.${getPhotoExt(photo)}`;
+    const upload = await serviceClient.storage.from("uploads").upload(path, photo, {
+      upsert: false,
+      contentType: photo.type
+    });
+
+    if (upload.error) {
+      return NextResponse.json({ error: upload.error.message }, { status: 500 });
+    }
+
+    const signed = await serviceClient.storage.from("uploads").createSignedUrl(path, 60 * 60);
+    if (signed.error || !signed.data?.signedUrl) {
+      return NextResponse.json({ error: signed.error?.message ?? "Failed to sign reference URL." }, { status: 500 });
+    }
+
+    return NextResponse.json({ referenceUrl: signed.data.signedUrl });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unexpected error";
+    return NextResponse.json({ error: message }, { status: 500 });
+  }
+}
